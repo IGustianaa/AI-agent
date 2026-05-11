@@ -16,6 +16,13 @@ yarn-debug.log*
 yarn-error.log*
 pm2.log
 
+# Persistent data (SQLite)
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
 # Editor
 .vscode/
 .idea/

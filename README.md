@@ -6,7 +6,12 @@ AI Agent berbasis Node.js yang terintegrasi dengan Telegram, mendukung **Groq** 
 
 - Chat AI langsung dari Telegram
 - Mendukung 2 provider: Groq (gratis) & OpenAI
-- Memori percakapan per user (context-aware)
+- **Streaming response** — jawaban muncul bertahap seperti ChatGPT
+- **Persistent memory (SQLite)** — riwayat tetap ada walau bot restart
+- **Function calling / tools**:
+  - `calculator` — evaluasi ekspresi matematika (mathjs)
+  - `get_current_datetime` — waktu saat ini per timezone
+  - `web_search` — pencarian web (Tavily kalau ada API key, fallback DuckDuckGo)
 - Commands: `/start`, `/reset`, `/stats`, `/help`
 - Akses kontrol via whitelist user ID (opsional)
 - Siap deploy di VPS dengan PM2 atau systemd
@@ -17,10 +22,13 @@ AI Agent berbasis Node.js yang terintegrasi dengan Telegram, mendukung **Groq** 
 
 ```
 src/
-  index.js         # Entry point & Telegram handler
+  index.js         # Entry point & Telegram handler (streaming + tools)
   config.js        # Load env variables
-  ai-provider.js   # Abstraksi Groq / OpenAI
-  conversation.js  # Manager riwayat percakapan per user
+  ai-provider.js   # Abstraksi Groq/OpenAI + streaming + tool loop
+  conversation.js  # SQLite persistent conversation store
+  tools.js         # Definisi & implementasi tools
+data/
+  bot.db           # File SQLite (auto-created)
 ```
 
 ## Prasyarat
@@ -30,6 +38,7 @@ src/
 - API Key salah satu:
   - [Groq](https://console.groq.com) — gratis
   - [OpenAI](https://platform.openai.com) — berbayar
+- (Opsional) [Tavily API key](https://tavily.com) untuk web search berkualitas
 
 ## Setup Cepat (lokal)
 
@@ -44,17 +53,22 @@ npm start
 
 Kirim `/start` ke bot kamu di Telegram — bot siap digunakan.
 
+> Catatan: `better-sqlite3` butuh native build. Pada Ubuntu/Debian biasanya sudah cukup dengan `build-essential`:
+> ```bash
+> sudo apt-get install -y build-essential python3
+> ```
+
 ---
 
 ## Deploy ke VPS
 
 ### 1. Persiapan VPS
 
-SSH ke VPS kamu, lalu install Node.js 20:
+SSH ke VPS kamu, lalu install Node.js 20 + build tools:
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs git
+sudo apt-get install -y nodejs git build-essential python3
 ```
 
 ### 2. Clone & Install
@@ -137,21 +151,58 @@ npm install --production
 pm2 restart telegram-ai-agent
 ```
 
+### 6. Backup SQLite
+
+File DB default ada di `data/bot.db`. Backup sederhana:
+
+```bash
+cp data/bot.db data/bot.db.$(date +%F).bak
+```
+
+Untuk restore, cukup replace file `data/bot.db` lalu `pm2 restart telegram-ai-agent`.
+
 ---
 
 ## Konfigurasi `.env`
 
-| Variabel | Wajib | Deskripsi |
-|----------|-------|-----------|
-| `TELEGRAM_BOT_TOKEN` | Ya | Token dari @BotFather |
-| `AI_PROVIDER` | Ya | `groq` atau `openai` |
-| `GROQ_API_KEY` | Jika pakai Groq | API key Groq |
-| `GROQ_MODEL` | Tidak | Default: `llama-3.3-70b-versatile` |
-| `OPENAI_API_KEY` | Jika pakai OpenAI | API key OpenAI |
-| `OPENAI_MODEL` | Tidak | Default: `gpt-4o-mini` |
-| `SYSTEM_PROMPT` | Tidak | Personality AI |
-| `MAX_HISTORY` | Tidak | Default: 20 pesan |
-| `ALLOWED_USERS` | Tidak | Comma-separated user IDs. Kosong = public |
+| Variabel | Wajib | Default | Deskripsi |
+|----------|-------|---------|-----------|
+| `TELEGRAM_BOT_TOKEN` | Ya | — | Token dari @BotFather |
+| `AI_PROVIDER` | Ya | `groq` | `groq` atau `openai` |
+| `GROQ_API_KEY` | Jika Groq | — | API key Groq |
+| `GROQ_MODEL` | — | `llama-3.3-70b-versatile` | Model Groq |
+| `OPENAI_API_KEY` | Jika OpenAI | — | API key OpenAI |
+| `OPENAI_MODEL` | — | `gpt-4o-mini` | Model OpenAI |
+| `SYSTEM_PROMPT` | — | (built-in) | Personality AI |
+| `MAX_HISTORY` | — | `30` | Jumlah pesan terakhir yang dipakai sebagai context |
+| `MAX_TOOL_ITERATIONS` | — | `5` | Batas iterasi tool-call per turn |
+| `DB_PATH` | — | `data/bot.db` | Lokasi file SQLite |
+| `STREAM_EDIT_INTERVAL_MS` | — | `1200` | Interval minimum edit pesan Telegram (ms) |
+| `DEFAULT_TIMEZONE` | — | `Asia/Jakarta` | Timezone default untuk tool datetime |
+| `TAVILY_API_KEY` | — | — | API key Tavily untuk web_search berkualitas |
+| `ALLOWED_USERS` | — | (kosong = public) | Comma-separated Telegram user IDs |
+
+## Streaming
+
+Bot mengirim 1 pesan "placeholder" kemudian meng-edit-nya secara throttled setiap `STREAM_EDIT_INTERVAL_MS` milidetik. Kalau kamu kena rate limit dari Telegram (HTTP 429), naikkan nilainya ke `1500` atau lebih.
+
+## Tool Calling — cara kerja
+
+1. User mengirim pesan.
+2. Bot memanggil AI dengan daftar tools tersedia.
+3. Kalau model memutuskan perlu tool, bot mengeksekusi tool di server, menampilkan *status tool* ke chat (`🔧 Tool: calculator`), lalu memberi hasilnya kembali ke model.
+4. Model melanjutkan menghasilkan jawaban (bisa memanggil tool lagi hingga `MAX_TOOL_ITERATIONS`).
+5. Jawaban final di-stream ke user.
+
+Semua pesan (termasuk `tool_calls` dan hasil `tool`) disimpan di SQLite agar pertanyaan lanjutan tetap memahami konteks.
+
+### Contoh
+
+- "Berapa 1234 * 77 + sqrt(2025)?" → model memanggil `calculator`.
+- "Jam berapa sekarang di Tokyo?" → model memanggil `get_current_datetime` dengan timezone `Asia/Tokyo`.
+- "Kabar terbaru tentang Node.js 22?" → model memanggil `web_search`.
+
+> Catatan: kemampuan tool-calling pada model Groq **Llama 3.3 70B Versatile** sangat baik. Model kecil (8B) mungkin kurang reliabel — gunakan model besar untuk hasil maksimal.
 
 ## Cara Membuat Bot Telegram
 
@@ -174,12 +225,17 @@ pm2 restart telegram-ai-agent
 2. Masuk ke API Keys → Create new secret key
 3. Copy ke `OPENAI_API_KEY`
 
+### Tavily (opsional, untuk web_search berkualitas)
+
+1. Daftar di [tavily.com](https://tavily.com)
+2. Dashboard → API Keys → copy ke `TAVILY_API_KEY`
+
 ## Keamanan
 
 - **JANGAN** commit file `.env` ke git (sudah di-ignore)
+- File `data/bot.db` berisi riwayat percakapan — treat as sensitive
 - Gunakan `ALLOWED_USERS` jika bot bersifat privat
 - Rotate API key secara berkala
-- Batasi firewall VPS hanya pada port yang diperlukan
 
 ## Troubleshooting
 
@@ -188,10 +244,15 @@ pm2 restart telegram-ai-agent
 - Pastikan token benar & bot tidak conflict dengan instance lain
 - Jika ada 2 bot memakai token sama → hanya 1 yang bisa polling
 
-**Error "AI Error: ..."?**
-- Cek API key valid
-- Cek quota/credit provider
+**Error `AI Error: ...`?**
+- Cek API key valid & quota masih ada
 - Cek koneksi internet VPS
+
+**Error `GLIBC_x.xx not found` saat `npm install`?**
+- `better-sqlite3` butuh kompilasi native. Pastikan `build-essential` dan `python3` terinstall.
+
+**Pesan terpotong atau edit error `message is not modified`?**
+- Ini diabaikan oleh bot. Kalau kamu kena rate limit Telegram (429), naikkan `STREAM_EDIT_INTERVAL_MS`.
 
 ## Lisensi
 
