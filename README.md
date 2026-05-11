@@ -5,7 +5,7 @@ AI Agent berbasis Node.js yang terintegrasi dengan Telegram, mendukung **Groq** 
 ## Fitur
 
 - Chat AI langsung dari Telegram
-- Mendukung 2 provider: Groq (gratis) & OpenAI
+- Mendukung 3 provider: **Groq** (gratis), **OpenAI**, dan **Amazon Bedrock** (Claude/Llama/Mistral)
 - **Streaming response** — jawaban muncul bertahap seperti ChatGPT
 - **Persistent memory (SQLite)** — riwayat tetap ada walau bot restart
 - **Function calling / tools**:
@@ -22,22 +22,26 @@ AI Agent berbasis Node.js yang terintegrasi dengan Telegram, mendukung **Groq** 
 
 ```
 src/
-  index.js         # Entry point & Telegram handler (streaming + tools)
-  config.js        # Load env variables
-  ai-provider.js   # Abstraksi Groq/OpenAI + streaming + tool loop
-  conversation.js  # SQLite persistent conversation store
-  tools.js         # Definisi & implementasi tools
+  index.js                    # Entry point & Telegram handler (streaming + tools)
+  config.js                   # Load env variables
+  ai-provider.js              # Dispatcher ke provider yang dipilih
+  conversation.js             # SQLite persistent conversation store
+  tools.js                    # Definisi & implementasi tools
+  providers/
+    openai-compat.js          # Backend Groq + OpenAI (Chat Completions)
+    bedrock.js                # Backend Amazon Bedrock (Converse API)
 data/
-  bot.db           # File SQLite (auto-created)
+  bot.db                      # File SQLite (auto-created)
 ```
 
 ## Prasyarat
 
 - Node.js >= 18
 - Token Telegram Bot dari [@BotFather](https://t.me/BotFather)
-- API Key salah satu:
+- API Key salah satu provider:
   - [Groq](https://console.groq.com) — gratis
   - [OpenAI](https://platform.openai.com) — berbayar
+  - [Amazon Bedrock](https://console.aws.amazon.com/bedrock) — berbayar, ala backend Kiro
 - (Opsional) [Tavily API key](https://tavily.com) untuk web search berkualitas
 
 ## Setup Cepat (lokal)
@@ -168,13 +172,18 @@ Untuk restore, cukup replace file `data/bot.db` lalu `pm2 restart telegram-ai-ag
 | Variabel | Wajib | Default | Deskripsi |
 |----------|-------|---------|-----------|
 | `TELEGRAM_BOT_TOKEN` | Ya | — | Token dari @BotFather |
-| `AI_PROVIDER` | Ya | `groq` | `groq` atau `openai` |
+| `AI_PROVIDER` | Ya | `groq` | `groq` \| `openai` \| `bedrock` |
 | `GROQ_API_KEY` | Jika Groq | — | API key Groq |
 | `GROQ_MODEL` | — | `llama-3.3-70b-versatile` | Model Groq |
 | `OPENAI_API_KEY` | Jika OpenAI | — | API key OpenAI |
 | `OPENAI_MODEL` | — | `gpt-4o-mini` | Model OpenAI |
+| `AWS_REGION` | Jika Bedrock | `us-east-1` | Region Bedrock |
+| `AWS_ACCESS_KEY_ID` | Jika Bedrock | — | IAM access key (atau pakai IAM role / AWS_PROFILE) |
+| `AWS_SECRET_ACCESS_KEY` | Jika Bedrock | — | IAM secret |
+| `AWS_SESSION_TOKEN` | — | — | Untuk credential temporary |
+| `BEDROCK_MODEL_ID` | — | `anthropic.claude-3-haiku-20240307-v1:0` | Model ID Bedrock |
 | `SYSTEM_PROMPT` | — | (built-in) | Personality AI |
-| `MAX_HISTORY` | — | `30` | Jumlah pesan terakhir yang dipakai sebagai context |
+| `MAX_HISTORY` | — | `30` | Jumlah pesan terakhir sebagai context |
 | `MAX_TOOL_ITERATIONS` | — | `5` | Batas iterasi tool-call per turn |
 | `DB_PATH` | — | `data/bot.db` | Lokasi file SQLite |
 | `STREAM_EDIT_INTERVAL_MS` | — | `1200` | Interval minimum edit pesan Telegram (ms) |
@@ -229,6 +238,36 @@ Semua pesan (termasuk `tool_calls` dan hasil `tool`) disimpan di SQLite agar per
 
 1. Daftar di [tavily.com](https://tavily.com)
 2. Dashboard → API Keys → copy ke `TAVILY_API_KEY`
+
+### Amazon Bedrock (ala backend Kiro)
+
+Bedrock adalah API AWS untuk foundation models (Claude, Llama, Mistral, Titan, dll). Kiro IDE sendiri dibangun di atas Bedrock, jadi ini yang paling mirip dengan "API Kiro".
+
+1. Login ke [AWS Console → Bedrock](https://console.aws.amazon.com/bedrock)
+2. Pilih region (mis. `us-east-1`), lalu **Model access** → request access ke model yang kamu mau (Claude 3 Haiku paling mudah di-approve, biasanya instant)
+3. Buat IAM user dengan policy `AmazonBedrockFullAccess` (atau minimal `bedrock:InvokeModelWithResponseStream`) dan generate access key
+4. Isi di `.env`:
+   ```env
+   AI_PROVIDER=bedrock
+   AWS_REGION=us-east-1
+   AWS_ACCESS_KEY_ID=AKIA...
+   AWS_SECRET_ACCESS_KEY=...
+   BEDROCK_MODEL_ID=anthropic.claude-3-haiku-20240307-v1:0
+   ```
+
+**Model ID yang sering dipakai:**
+
+| Model | ID |
+|---|---|
+| Claude 3 Haiku (murah, cepat) | `anthropic.claude-3-haiku-20240307-v1:0` |
+| Claude 3.5 Haiku | `anthropic.claude-3-5-haiku-20241022-v1:0` |
+| Claude 3.5 Sonnet | `anthropic.claude-3-5-sonnet-20241022-v2:0` |
+| Llama 3.1 70B Instruct | `meta.llama3-1-70b-instruct-v1:0` |
+| Mistral Large | `mistral.mistral-large-2407-v1:0` |
+
+> Beberapa model (Sonnet terutama) butuh **inference profile** — tambahkan prefix `us.` atau `eu.` ke model ID, mis. `us.anthropic.claude-3-5-sonnet-20241022-v2:0`. Cek [daftar cross-region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html) atau coba; kalau error, ganti ke `us.*`.
+
+> Bedrock dibayar **per-token** sesuai model. Cek [Bedrock Pricing](https://aws.amazon.com/bedrock/pricing/). Claude 3 Haiku adalah opsi termurah untuk eksperimen.
 
 ## Keamanan
 

@@ -16,6 +16,27 @@ if (config.AI_PROVIDER === 'groq' && !config.GROQ_API_KEY) {
   console.error('[ERROR] GROQ_API_KEY tidak ditemukan di .env');
   process.exit(1);
 }
+if (config.AI_PROVIDER === 'bedrock') {
+  if (!config.BEDROCK_MODEL_ID) {
+    console.error('[ERROR] BEDROCK_MODEL_ID tidak ditemukan di .env');
+    process.exit(1);
+  }
+  // AWS credentials bisa dari env, AWS_PROFILE, atau IAM role.
+  // Hanya warn, jangan exit — biar chain default SDK bekerja.
+  if (!config.AWS_ACCESS_KEY_ID && !process.env.AWS_PROFILE) {
+    console.warn(
+      '[WARN] AWS_ACCESS_KEY_ID tidak di-set & AWS_PROFILE kosong. ' +
+        'SDK akan mencoba default credential chain (IAM role, ~/.aws/credentials).'
+    );
+  }
+}
+if (!['groq', 'openai', 'bedrock'].includes(config.AI_PROVIDER)) {
+  console.error(
+    `[ERROR] AI_PROVIDER tidak valid: "${config.AI_PROVIDER}". ` +
+      `Gunakan: groq | openai | bedrock`
+  );
+  process.exit(1);
+}
 
 // --- Inisialisasi ---------------------------------------------------------
 const bot = new TelegramBot(config.TELEGRAM_BOT_TOKEN, { polling: true });
@@ -68,7 +89,13 @@ Aku AI Agent dengan kemampuan:
 /help   - Bantuan
 
 Provider: ${config.AI_PROVIDER.toUpperCase()}
-Model: ${config.AI_PROVIDER === 'openai' ? config.OPENAI_MODEL : config.GROQ_MODEL}`;
+Model: ${
+  config.AI_PROVIDER === 'openai'
+    ? config.OPENAI_MODEL
+    : config.AI_PROVIDER === 'bedrock'
+    ? config.BEDROCK_MODEL_ID
+    : config.GROQ_MODEL
+}`;
 
   bot.sendMessage(chatId, welcome, { parse_mode: 'Markdown' });
 });
