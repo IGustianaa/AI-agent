@@ -14,6 +14,7 @@ const config = require('./config');
 const MiningEngine = require('./mining-engine');
 const SystemMonitor = require('./system-monitor');
 const AIOptimizer = require('./ai-optimizer');
+const TelegramMiningBot = require('./telegram-bot');
 const Logger = require('./logger');
 
 const logger = new Logger(config.LOG_LEVEL);
@@ -57,6 +58,13 @@ async function main() {
   const monitor = new SystemMonitor();
   const miner = new MiningEngine(config, logger);
   const optimizer = new AIOptimizer(config, logger);
+
+  // Start Telegram bot
+  let telegramBot = null;
+  if (config.TELEGRAM_ENABLED && config.TELEGRAM_BOT_TOKEN) {
+    telegramBot = new TelegramMiningBot(config, logger, miner, monitor, optimizer);
+    telegramBot.start();
+  }
 
   switch (MODE) {
     case 'benchmark': {

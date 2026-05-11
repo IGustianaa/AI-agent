@@ -34,6 +34,11 @@ module.exports = {
   DASHBOARD_PORT: parseInt(process.env.DASHBOARD_PORT) || 3000,
   LOG_LEVEL: process.env.LOG_LEVEL || 'info',
 
+  // --- Telegram Bot ---
+  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || '',
+  TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID || '',
+  TELEGRAM_ENABLED: process.env.TELEGRAM_ENABLED !== 'false',
+
   // --- Schedule ---
   MINING_SCHEDULE: process.env.MINING_SCHEDULE || '',
 
