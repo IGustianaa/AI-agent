@@ -1,0 +1,41 @@
+{
+  "name": "ai-mining-agent",
+  "version": "1.0.0",
+  "description": "AI Agent untuk optimasi cryptocurrency mining di lokal - mendukung CPU mining dengan monitoring cerdas",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "mine": "node src/index.js --start-mining",
+    "monitor": "node src/index.js --monitor",
+    "benchmark": "node src/index.js --benchmark"
+  },
+  "keywords": [
+    "mining",
+    "crypto",
+    "ai",
+    "agent",
+    "cpu-mining",
+    "optimization",
+    "monero",
+    "randomx"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "blessed": "^0.1.81",
+    "blessed-contrib": "^4.11.1",
+    "chalk": "^4.1.2",
+    "dotenv": "^16.4.5",
+    "groq-sdk": "^0.7.0",
+    "openai": "^4.58.0",
+    "os-utils": "^0.0.14",
+    "systeminformation": "^5.22.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  }
+}
